@@ -44,6 +44,8 @@ if (!xml.includes('RECOGNIZE_SPEECH')) {
     '        <intent><action android:name="android.speech.action.RECOGNIZE_SPEECH" /></intent>\n' +
     '        <intent><action android:name="android.intent.action.TTS_SERVICE" /></intent>\n' +
     '        <intent><action android:name="android.intent.action.VIEW" /><data android:scheme="https" /></intent>\n' +
+    '        <intent><action android:name="android.intent.action.VIEW" /><data android:scheme="market" /></intent>\n' +
+    '        <package android:name="com.google.android.tts" />\n' +
     '    </queries>\n</manifest>');
   console.log('Sprachdienste sichtbar gemacht');
 }

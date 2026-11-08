@@ -285,19 +285,43 @@ function plug(name){
 }
 
 /* Vorlesen */
-var ttsMissingShown={};
+var ttsL=false, ttsStarted={}, ttsWarned=false;
+function ttsListen(P){
+  if(ttsL)return;ttsL=true;
+  try{P.addListener('start',function(e){ttsStarted[e.id]=1;});}catch(x){}
+  try{P.addListener('error',function(e){
+    ttsStarted[e.id]=1;var c=e&&e.code;
+    if(c===-9||c===-5)ttsMissing(null,'Die Stimme wird gerade noch heruntergeladen oder fehlt.');
+    else if(c===-6||c===-7)toast('Die Stimme braucht gerade Internet. Prüf deine Verbindung.',5000);
+    else ttsHelp('Die Sprachausgabe meldet einen Fehler (Code '+c+').');
+  });}catch(x){}
+}
+function ttsMissing(lang,why){
+  openSheet('<h3>Stimme fehlt</h3><div class="srow"><small style="color:var(--fg)">'+esc(why||('Auf deinem Handy ist noch keine Stimme für '+ln(lang)+' installiert.'))+' Du kannst sie kostenlos nachladen: In den Einstellungen unter Sprachausgabe, Google, Sprachdaten installieren.</small></div>'+
+    '<button class="btn pri wide" data-act="ttsinstall">Stimmen herunterladen</button><button class="btn wide" data-act="ttstest">Vorlesen testen</button><button class="btn wide" data-act="close">Später</button>');
+}
+function ttsHelp(why){
+  openSheet('<h3>Kein Ton beim Vorlesen?</h3><div class="srow"><small style="color:var(--fg)">'+esc(why)+'</small></div>'+
+    '<button class="btn pri wide" data-act="ttstest">Vorlesen testen</button><button class="btn wide" data-act="close">Schließen</button>');
+}
 async function say(text,lang,slow){
   if(!text)return;
   var tag=(LANGS[lang]||{t:lang}).t, rate=set.rate*(slow?0.65:1);
   var P=plug('Tts');
   if(P){
-    try{await P.speak({text:text,lang:tag,rate:rate});}
-    catch(e){
+    ttsListen(P);
+    try{
+      var r=await P.speak({text:text,lang:tag,rate:rate});
+      if(r&&r.volume===0){toast('Deine Medienlautstärke steht auf 0. Drück die Lauter-Taste am Handy.',5000);return;}
+      var id=r&&r.id;
+      setTimeout(function(){
+        if(id&&!ttsStarted[id]&&!ttsWarned){ttsWarned=true;ttsHelp('Das Handy hat den Satz angenommen, spielt aber nichts ab. Meistens fehlt die Google-Sprachausgabe oder eine Stimme für '+ln(lang)+'.');}
+      },4500);
+    }catch(e){
       var m=String((e&&e.message)||e);
-      if(/missing/.test(m)){
-        if(!ttsMissingShown[lang]){ttsMissingShown[lang]=1;}
-        openSheet('<h3>Stimme fehlt</h3><div class="srow"><small style="color:var(--fg)">Auf deinem Handy ist noch keine Stimme für '+esc(ln(lang))+' installiert. Du kannst sie kostenlos in den Android-Einstellungen nachladen (Sprachausgabe, Google, Sprachdaten installieren).</small></div><button class="btn pri wide" data-act="ttsinstall">Stimmen herunterladen</button><button class="btn wide" data-act="close">Später</button>');
-      }else toast('Vorlesen hat nicht geklappt.');
+      if(/missing/.test(m))ttsMissing(lang);
+      else if(/^init/.test(m))ttsHelp('Auf deinem Handy ist keine Sprachausgabe eingerichtet. Installiere „Sprachausgabe von Google“ aus dem Play Store und stell sie in den Android-Einstellungen als Standard ein.');
+      else ttsHelp('Vorlesen hat nicht geklappt: '+m);
     }
     return;
   }
@@ -306,6 +330,25 @@ async function say(text,lang,slow){
       var v=speechSynthesis.getVoices().filter(function(v){return v.lang&&v.lang.slice(0,2).toLowerCase()===tag.slice(0,2).toLowerCase();})[0];if(v)u.voice=v;
       speechSynthesis.speak(u);}catch(e){toast('Vorlesen hat nicht geklappt.');}
   }else toast('Vorlesen wird hier nicht unterstützt.');
+}
+async function ttsTest(){
+  var P=plug('Tts');if(!P){toast('Nur in der App verfügbar.');return;}
+  var d={};try{d=await P.diag();}catch(e){}
+  var eng=(d.engines||[]), hasGoogle=eng.indexOf('com.google.android.tts')>=0;
+  var probs=[];
+  if(!d.ready)probs.push(d.initDone?'Die Sprachausgabe startet nicht (Status '+d.initStatus+').':'Die Sprachausgabe startet noch …');
+  if(!eng.length)probs.push('Auf dem Handy ist keine Sprachausgabe installiert.');
+  else if(!hasGoogle)probs.push('Die Sprachausgabe von Google fehlt. Mit ihr klappt es am zuverlässigsten.');
+  if(d.volume===0)probs.push('Die Medienlautstärke steht auf 0.');
+  openSheet('<h3>Vorlesen testen</h3>'+
+    '<div class="srow"><b>'+(probs.length?'Das habe ich gefunden':'Alles sieht gut aus')+'</b>'+(probs.length?'<ul style="margin:0;padding-left:20px">'+probs.map(function(p){return '<li>'+esc(p)+'</li>';}).join('')+'</ul>':'<small>Tipp auf Probe. Wenn du nichts hörst, ist eine Stimme nicht geladen.</small>')+
+    '<small>Sprachausgabe: '+esc(d.engine||'keine')+' · Lautstärke '+(d.volume!=null?d.volume+' von '+d.maxVolume:'?')+'</small></div>'+
+    '<div class="row"><button class="btn pri" style="flex:1" data-act="ttsprobe" data-l="de">'+ic('play')+'Probe Deutsch</button><button class="btn" style="flex:1" data-act="ttsprobe" data-l="en">'+ic('play')+'Probe Englisch</button></div>'+
+    (d.volume===0?'<button class="btn wide" data-act="ttslouder">Lauter stellen</button>':'')+
+    (!hasGoogle?'<button class="btn wide grn" data-act="ttsgoogle">Sprachausgabe von Google holen</button>':'')+
+    '<button class="btn wide" data-act="ttsinstall">Stimmen herunterladen</button>'+
+    '<button class="btn wide" data-act="ttssettings">Android-Einstellungen Sprachausgabe</button>'+
+    '<button class="btn wide" data-act="ttsrestart">Sprachausgabe neu verbinden</button>');
 }
 
 /* Zuhören */
@@ -748,7 +791,7 @@ async function settingsSheet(){
     '<div class="srow"><b>Sprechtempo</b><input type="range" id="rate" min="0.6" max="1.3" step="0.05" value="'+set.rate+'"><small>Wie schnell der Fuchs vorliest</small></div>'+
     '<div class="srow line"><div><b>Automatisch vorlesen</b><br><small>Übersetzungen und Lehrer-Antworten sofort anhören</small></div><input type="checkbox" class="sw" id="autoSay"'+(set.autoSay?' checked':'')+' aria-label="Automatisch vorlesen"></div>'+
     '<button class="srow" style="border:0;text-align:left" data-act="keysheet"><b>Lehrer (Claude-Schlüssel)</b><small>'+(hasKey()?'Eingetragen · tippen zum Ändern':'Nicht eingetragen · tippen zum Freischalten')+'</small></button>'+
-    (isNative()?'<button class="srow" style="border:0;text-align:left" data-act="ttsinstall"><b>Stimmen herunterladen</b><small>Falls eine Sprache nicht vorgelesen wird</small></button>':'')+
+    (isNative()?'<button class="srow" style="border:0;text-align:left" data-act="ttstest"><b>Vorlesen testen</b><small>Wenn beim Anhören nichts kommt</small></button>':'')+
     (isNative()?'<button class="srow" style="border:0;text-align:left" data-act="upd"><b>App-Update</b><small>'+(appVer?'Version '+appVer.code+' · ':'')+'Tippen zum Prüfen'+(upd?' · Neu: '+upd.ver:'')+'</small></button>'+
     '<div class="srow line"><div><b>Updates automatisch suchen</b><br><small>Die Installation bestätigst du selbst</small></div><input type="checkbox" class="sw" id="autoUpd"'+(set.autoUpd?' checked':'')+' aria-label="Updates automatisch suchen"></div>':'')+
     '<div class="srow line"><div><b>Vokabelheft</b><br><small>'+vocab.length+' Einträge</small></div><button class="btn sm" data-act="clearvoc">Leeren</button></div>'+
@@ -820,6 +863,12 @@ document.addEventListener('click',async function(e){
     case 'savekey':set.key=($('#keyIn').value||'').trim();saveSet();closeSheet();toast(hasKey()?'Lehrer freigeschaltet.':'Schlüssel entfernt.');render();break;
     case 'keysheet':keySheet();break;
     case 'ttsinstall':{var T=plug('Tts');closeSheet();if(T)T.install().catch(function(){toast('Einstellungen lassen sich nicht öffnen.');});break;}
+    case 'ttstest':ttsTest();break;
+    case 'ttsprobe':ttsWarned=false;say(b.dataset.l==='de'?'Hallo, ich bin dein Sprach Fox.':'Hello, I am your language fox.',b.dataset.l);break;
+    case 'ttslouder':{var T2=plug('Tts');if(T2)T2.louder().then(ttsTest).catch(function(){});break;}
+    case 'ttsgoogle':{var T3=plug('Tts');if(T3)T3.getGoogle().catch(function(){toast('Suche im Play Store nach „Sprachausgabe von Google“.',6000);});break;}
+    case 'ttssettings':{var T4=plug('Tts');if(T4)T4.settings().catch(function(){toast('Einstellungen lassen sich nicht öffnen.');});break;}
+    case 'ttsrestart':{var T5=plug('Tts');if(T5){await T5.restart();toast('Sprachausgabe neu verbunden.');setTimeout(ttsTest,1500);}break;}
     case 'upd':closeSheet();checkUpdate(true);break;
     case 'updgo':doUpdate();break;
     case 'clearvoc':openSheet('<h3>Vokabelheft leeren?</h3><div class="srow"><small style="color:var(--fg)">Alle '+vocab.length+' Vokabeln und dein Lernstand werden gelöscht.</small></div><button class="btn wide" style="background:var(--bad);color:#fff" data-act="clearyes">Ja, alles löschen</button><button class="btn wide" data-act="close">Abbrechen</button>');break;
