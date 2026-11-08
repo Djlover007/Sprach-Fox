@@ -4,6 +4,10 @@ import android.content.Context;
 import android.content.Intent;
 import android.media.AudioAttributes;
 import android.media.AudioManager;
+import android.media.MediaPlayer;
+import android.content.SharedPreferences;
+import java.io.File;
+import java.util.HashMap;
 import android.os.Bundle;
 import android.speech.tts.TextToSpeech;
 import android.speech.tts.UtteranceProgressListener;
@@ -32,9 +36,18 @@ public class TtsPlugin extends Plugin {
     private String engineUsed = "";
     private boolean triedGoogle = false;
     private final List<PluginCall> waiting = new ArrayList<PluginCall>();
+    // Datei-Modus: Satz erst in eine Datei sprechen und selbst abspielen (hilft bei Fehler -4)
+    private boolean fileMode = false;
+    private final HashMap<String, String[]> pending = new HashMap<String, String[]>();
+    private MediaPlayer player;
 
     @Override
     public void load() {
+        try {
+            fileMode = prefs().getBoolean("fileMode", false);
+        } catch (Exception e) {
+            fileMode = false;
+        }
         init(null);
     }
 
@@ -94,16 +107,20 @@ public class TtsPlugin extends Plugin {
         tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
             @Override
             public void onStart(String id) {
-                JSObject o = new JSObject();
-                o.put("id", id);
-                notifyListeners("start", o);
+                if (id.startsWith("file:")) {
+                    return;
+                }
+                send("start", id, 0);
             }
 
             @Override
             public void onDone(String id) {
-                JSObject o = new JSObject();
-                o.put("id", id);
-                notifyListeners("done", o);
+                if (id.startsWith("file:")) {
+                    playFile(id.substring(5));
+                    return;
+                }
+                pending.remove(id);
+                send("done", id, 0);
             }
 
             @Override
@@ -114,12 +131,96 @@ public class TtsPlugin extends Plugin {
 
             @Override
             public void onError(String id, int code) {
-                JSObject o = new JSObject();
-                o.put("id", id);
-                o.put("code", code);
-                notifyListeners("error", o);
+                if (id.startsWith("file:")) {
+                    send("error", id.substring(5), code);
+                    return;
+                }
+                if (code == TextToSpeech.ERROR_OUTPUT && !fileMode) {
+                    // Direkte Ausgabe klappt nicht: ab jetzt ueber Datei abspielen
+                    fileMode = true;
+                    try {
+                        prefs().edit().putBoolean("fileMode", true).apply();
+                    } catch (Exception e) {
+                        // ignore
+                    }
+                    String[] p = pending.get(id);
+                    if (p != null) {
+                        speakToFile(id, p[0]);
+                        return;
+                    }
+                }
+                send("error", id, code);
             }
         });
+    }
+
+    private SharedPreferences prefs() {
+        return getContext().getSharedPreferences("sprachfox_tts", Context.MODE_PRIVATE);
+    }
+
+    private void send(String ev, String id, int code) {
+        JSObject o = new JSObject();
+        o.put("id", id);
+        o.put("code", code);
+        notifyListeners(ev, o);
+    }
+
+    private File fileFor(String id) {
+        return new File(getContext().getCacheDir(), "say.wav");
+    }
+
+    private void speakToFile(String id, String text) {
+        try {
+            stopPlayer();
+            Bundle b = new Bundle();
+            int r = tts.synthesizeToFile(text, b, fileFor(id), "file:" + id);
+            if (r != TextToSpeech.SUCCESS) {
+                send("error", id, -40);
+            }
+        } catch (Exception e) {
+            send("error", id, -41);
+        }
+    }
+
+    private synchronized void stopPlayer() {
+        if (player != null) {
+            try {
+                player.stop();
+            } catch (Exception e) {
+                // ignore
+            }
+            try {
+                player.release();
+            } catch (Exception e) {
+                // ignore
+            }
+            player = null;
+        }
+    }
+
+    private synchronized void playFile(final String id) {
+        stopPlayer();
+        try {
+            MediaPlayer mp = new MediaPlayer();
+            mp.setAudioAttributes(new AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_MEDIA)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                .build());
+            mp.setDataSource(fileFor(id).getAbsolutePath());
+            mp.setOnCompletionListener(new MediaPlayer.OnCompletionListener() {
+                @Override
+                public void onCompletion(MediaPlayer m) {
+                    send("done", id, 0);
+                }
+            });
+            mp.prepare();
+            mp.start();
+            player = mp;
+            pending.remove(id);
+            send("start", id, 0);
+        } catch (Exception e) {
+            send("error", id, -42);
+        }
     }
 
     private synchronized void flush() {
@@ -164,14 +265,19 @@ public class TtsPlugin extends Plugin {
         Double rate = call.getDouble("rate", 1.0);
         tts.setSpeechRate(rate == null ? 1.0f : rate.floatValue());
         tts.setPitch(1.0f);
-        Bundle b = new Bundle();
-        b.putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_MUSIC);
-        b.putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 1.0f);
         String id = "fox" + System.currentTimeMillis();
-        int r = tts.speak(text, TextToSpeech.QUEUE_FLUSH, b, id);
-        if (r != TextToSpeech.SUCCESS) {
-            call.reject("speak:" + r);
-            return;
+        pending.clear();
+        pending.put(id, new String[]{text});
+        if (fileMode) {
+            tts.stop();
+            speakToFile(id, text);
+        } else {
+            stopPlayer();
+            int r = tts.speak(text, TextToSpeech.QUEUE_FLUSH, new Bundle(), id);
+            if (r != TextToSpeech.SUCCESS) {
+                call.reject("speak:" + r);
+                return;
+            }
         }
         JSObject o = new JSObject();
         o.put("id", id);
@@ -196,6 +302,7 @@ public class TtsPlugin extends Plugin {
         if (tts != null) {
             tts.stop();
         }
+        stopPlayer();
         call.resolve();
     }
 
@@ -238,6 +345,7 @@ public class TtsPlugin extends Plugin {
             // ignore
         }
         o.put("engines", eng);
+        o.put("fileMode", fileMode);
         call.resolve(o);
     }
 
@@ -252,6 +360,12 @@ public class TtsPlugin extends Plugin {
             // ignore
         }
         triedGoogle = false;
+        fileMode = false;
+        try {
+            prefs().edit().putBoolean("fileMode", false).apply();
+        } catch (Exception e) {
+            // ignore
+        }
         init(null);
         call.resolve();
     }
@@ -317,6 +431,7 @@ public class TtsPlugin extends Plugin {
 
     @Override
     protected void handleOnDestroy() {
+        stopPlayer();
         if (tts != null) {
             tts.shutdown();
             tts = null;

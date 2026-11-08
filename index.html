@@ -293,7 +293,7 @@ function ttsListen(P){
     ttsStarted[e.id]=1;var c=e&&e.code;
     if(c===-9||c===-5)ttsMissing(null,'Die Stimme wird gerade noch heruntergeladen oder fehlt.');
     else if(c===-6||c===-7)toast('Die Stimme braucht gerade Internet. Prüf deine Verbindung.',5000);
-    else ttsHelp('Die Sprachausgabe meldet einen Fehler (Code '+c+').');
+    else ttsHelp('Die Sprachausgabe meldet einen Fehler (Code '+c+'). Tipp auf „Vorlesen testen“ und dort auf „Sprachausgabe neu verbinden“.');
   });}catch(x){}
 }
 function ttsMissing(lang,why){
@@ -342,7 +342,7 @@ async function ttsTest(){
   if(d.volume===0)probs.push('Die Medienlautstärke steht auf 0.');
   openSheet('<h3>Vorlesen testen</h3>'+
     '<div class="srow"><b>'+(probs.length?'Das habe ich gefunden':'Alles sieht gut aus')+'</b>'+(probs.length?'<ul style="margin:0;padding-left:20px">'+probs.map(function(p){return '<li>'+esc(p)+'</li>';}).join('')+'</ul>':'<small>Tipp auf Probe. Wenn du nichts hörst, ist eine Stimme nicht geladen.</small>')+
-    '<small>Sprachausgabe: '+esc(d.engine||'keine')+' · Lautstärke '+(d.volume!=null?d.volume+' von '+d.maxVolume:'?')+'</small></div>'+
+    '<small>Sprachausgabe: '+esc(d.engine||'keine')+(d.fileMode?' · Wiedergabe über Datei':'')+' · Lautstärke '+(d.volume!=null?d.volume+' von '+d.maxVolume:'?')+'</small></div>'+
     '<div class="row"><button class="btn pri" style="flex:1" data-act="ttsprobe" data-l="de">'+ic('play')+'Probe Deutsch</button><button class="btn" style="flex:1" data-act="ttsprobe" data-l="en">'+ic('play')+'Probe Englisch</button></div>'+
     (d.volume===0?'<button class="btn wide" data-act="ttslouder">Lauter stellen</button>':'')+
     (!hasGoogle?'<button class="btn wide grn" data-act="ttsgoogle">Sprachausgabe von Google holen</button>':'')+
