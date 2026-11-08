@@ -1,0 +1,9 @@
+{
+  "appId": "de.sprachfox.app",
+  "appName": "Sprach Fox",
+  "webDir": "www",
+  "android": { "backgroundColor": "#f7f5f2" },
+  "plugins": {
+    "CapacitorHttp": { "enabled": true }
+  }
+}

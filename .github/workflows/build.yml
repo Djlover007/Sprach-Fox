@@ -1,0 +1,62 @@
+name: APK bauen
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Web-Dateien vorbereiten
+        run: |
+          mkdir -p www && cp index.html www/index.html
+          sed -i "s#__REPO__#${{ github.repository }}#" www/index.html
+      - run: npm install
+      - run: npx cap add android
+      - name: Fuchs-Icon erzeugen
+        run: |
+          pip install pillow
+          python3 make-icons.py
+      - name: Sprache, Vorlesen und Update einbauen
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: node setup-android.js
+      - run: npx cap sync android
+      - name: APK bauen
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug
+      - name: Änderungen sammeln
+        run: |
+          prev=$(git describe --tags --abbrev=0 --match 'build-*' HEAD 2>/dev/null || true)
+          if [ -n "$prev" ]; then range="$prev..HEAD"; else range="-5"; fi
+          git log $range --no-merges --format='%s' \
+            | grep -v -i -E '^(add files via upload|update [a-z0-9._-]+|create [a-z0-9._-]+)$' \
+            | sed 's/^/- /' > notes.md || true
+          [ -s notes.md ] || echo "- Kleine Verbesserungen und Fehlerbehebungen" > notes.md
+          cat notes.md
+      - name: APK umbenennen
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk SprachFox.apk
+      - name: APK veröffentlichen
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Sprach Fox ${{ github.run_number }}
+          body_path: notes.md
+          files: SprachFox.apk
